@@ -1,0 +1,3 @@
+#lang racket
+(define (task2 n)
+  )
