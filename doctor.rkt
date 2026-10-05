@@ -13,6 +13,38 @@
   (doctor-driver-loop-v2 name #()) ; изначально история реплик пациента пустая
 )
 
+
+; функция, запускающая "Доктора", многопользовательская версия
+; параметр stop_word -- стоп-слово, max_patient -- максимальное количество пациентов в очереди
+(define (visit-doctor-v2 stop_word max_patient)
+  (let loop ((count max_patient)) ; рекурсивный вызов функции с счетчиком оставшихся в очереди пациентов
+    (if (= count 0)
+        (print '(time to go home)) ; пациенты закончились
+        (let ((name (ask-patient-name))) ; узнаем имя пациента и запоминаем его
+          (if (equal? name stop_word)
+              (print '(time to go home)) ; попали на стоп-слово
+              (begin
+                (visit-doctor name) ; вызывем старый обработчик для конкретного пользователя
+                (loop (sub1 count)) ; идем в рекурсивный вызов
+              )
+          )
+        )
+    )
+  )
+)
+
+
+; ввод имени очередного пациента
+(define (ask-patient-name)
+ (begin
+  (println '(next!))
+  (println '(who are you?))
+  (print '**)  ; доктор ждет ввода реплики пациента
+  (car (read))  ; именем считается первый элемент списка, введенного пользователем
+ ) 
+)
+
+
 ; цикл диалога Доктора с пациентом
 ; параметр name -- имя пациента
 ;(define (doctor-driver-loop name)
@@ -39,7 +71,7 @@
       (cond 
 	    ((equal? user-response '(goodbye)) ; реплика '(goodbye) служит для выхода из цикла
              (printf "Goodbye, ~a!\n" name)
-             (print '(see you next week)))
+             (println '(see you next week)))
             (else (print (reply user-response history)) ; иначе Доктор генерирует ответ, печатает его и продолжает цикл
                   ; добавляем реплику в исторический вектор (ф-ия добавления описана ниже)
                   ; после ответа Доктора, чтобы выбирать ответ только из прошлых фраз
@@ -59,12 +91,18 @@
 
 ; генерация ответной реплики по user-response -- реплике от пользователя и исторического вектора history
 (define (reply user-response history)
-  (case (random 0
-                (if (history-applicable? history) 3 2)) ; с равной вероятностью выбирается один из двух или трех способов построения ответа
-    ((0) (hedge-answer))  ; 1й способ
-    ((1) (qualifier-answer user-response)) ; 2й способ
-    ((2) (history-answer history)) ; 3й способ
-  )  
+  (let ((history? (history-applicable? history))
+        (keywords? (keywords-applicable? user-response)))
+      (case (random
+             (if history? 0 1) ; левая граница зависит от "истории"
+             (if keywords? 4 3) ; правая граница зависит от ключевых слов
+             ) ; с равной вероятностью выбирается один из способов построения ответа
+        ((0) (history-answer history)) ; 3й способ
+        ((1) (hedge-answer))  ; 1й способ
+        ((2) (qualifier-answer user-response)) ; 2й способ
+        ((3) (keyword-answer user-response)) ; 4й способ
+        )
+  )
 )
 
 ; 1й способ генерации ответной реплики -- случайный выбор одной из заготовленных фраз, не связанных с репликой пользователя
@@ -211,6 +249,105 @@
   )
 )
 
+
+; 4я стратегия ответа - выбор ответа по ключевому слову
+(define (keyword-answer user-response)
+  (let* ((keywords (get-key user-response)) ; только ключевые слова
+         (keyword (pick-random-list keywords))) ; выбираем случайное ключевое слово
+    (pick-random-vector (hash-ref keywords-structure keyword)) ; случайная фраза для этого ключевого слова
+  )
+)
+
+
+; чеккер проверка применимости 4-й стратегии ответа
+; когда в реплике есть хотя бы одно ключевое слово
+(define (keywords-applicable? user-response)
+  (ormap (lambda (word) ; проверяем до первого не #f
+           (member word keywords-list) ; проверка присутствия слова в списке ключевых слов
+                                       ; возвращается хвост списка в случае успеха
+         )
+         user-response
+  )
+)
+
+
+; обрабатывает весь вектор групп
+; в основе лежит функция add-group для добавления одной группы
+(define (make-keywords-structure groups)
+  (vector-foldl
+   (lambda (i new-hash group)
+     (add-group group new-hash)
+   )
+   (make-immutable-hash '()) ; немутируемая хеш-таблица
+   groups
+  )
+)
+
+
+; выбирает из реплик пациента только ключевые слова
+; (повторы сохраняются для более вероятного их выбора)
+(define (get-key user-response)
+  (filter (lambda (word)
+            (hash-has-key? keywords-structure word) ; т.е. только те, которые лежат в хеше
+          )
+          user-response
+  )
+)
+
+
+; случайно выбирает одно ключевое слово для построения реплики
+; по аналогии с pick-random-vector
+(define (pick-random-list lst)
+  (list-ref lst (random 0 (length lst)))
+)
+
+
+; добавляет в хэш-таблицу все ключевые слова одной группы вместе с ответами
+; group -- обрабатываемая группа, old-hash -- хеш-таблица, которую к этому моменту успели построить
+(define (add-group group old-hash)
+  (let ((keywords (vector-ref group 0)) ; ключевые слова
+        (sentences (vector-ref group 1))) ; шаблоны предложений
+    (vector-foldl ; проходимся по всем ключевым словам
+     (lambda (i new-hash keyword) ; keyword -- текущее слово, new-hash -- текущая хеш-таблица
+       (let ((new-answers (make-keywords-answers sentences keyword))) ; строим готовые ответы
+         (if (hash-has-key? new-hash keyword) ; проверка на то, есть ли такое слово в таблице
+             (hash-set new-hash keyword
+                       (vector-append (hash-ref new-hash keyword) new-answers)) ; есть - берем старые ответы и добисываем к ним новые
+             (hash-set new-hash keyword new-answers) ; иначе - создаем запись
+         )
+       )
+     )
+     old-hash
+     keywords
+    )
+  )
+)
+
+
+; составляет для вектора шаблонов вектор возможных реплик
+; sentences -- вектор шаблонов, keyword -- ключевое слово
+(define (make-keywords-answers sentences keyword)
+  (vector-map (lambda (sentence)
+                (star-replace sentence keyword)
+              )
+              sentences
+  )
+)
+
+
+; подставляет слово вместо * в шаблон предложения
+(define (star-replace sentence keyword)
+  (map (lambda (word)
+         (if (equal? word '*)
+             keyword  ; нашли звездочку - меняем
+             word  ; иначе не трогаем
+         )
+       )
+       sentence
+  )
+)
+
+
 ; в Racket нет vector-foldl, реализуем для случая с одним вектором (vect-foldl f init vctr)
 ; у f три параметра i -- индекс текущего элемента, result -- текущий результат свёртки, elem -- текущий элемент вектора
 (define (vector-foldl f init vctr)
@@ -225,3 +362,63 @@
   (let loop ((i (sub1 length)) (result init))
    (if (= i -1) result
     (loop (sub1 i) (f i result (vector-ref vctr i)))))))
+
+
+; хеш-таблица для хранения ответов для ключевых слов
+(define keywords-structure
+  (make-keywords-structure
+   '#(
+     #( ; начало данных 1й группы
+      #(depressed suicide scheme university) ; вектор ключевых слов 1й группы
+      #( ; вектор шаблонов для составления ответных реплик 1й группы 
+       (when you feel depressed go out for ice cream) ; 1й шаблон 1й группы -- список символов
+       (depression is a disease that can be treated)
+       (can you tell me more about these feelings ?)
+       (it is okay not to be okay sometimes)
+       )
+      ) ; завершение данных 1й группы
+     #( ; начало данных 2й группы
+      #(mother father parents brother sister uncle aunt grandma grandpa)
+      #(
+       (tell me more about your *)
+       (i want to know all about your *)
+       (why do you feel that way about your * ?)
+       (what is your relationship with your * like ?)
+       (do you think your family understands you ?)
+       )
+      )
+     #( ; начало данных 3й группы
+      #(university scheme lections)
+      #(
+       (your education is important)
+       (how much time do you spend on your studies ?)
+       (do your studies make you nervous ?)
+       (what do you like least about studying ?)
+       (do you feel pressured by your studies ?)
+       )
+      )
+     #( ; начало данных 4й группы (работа)
+      #(work job boss colleague office career salary)
+      #(
+       (how do you feel about your work ?)
+       (do you enjoy working with your colleagues ?)
+       (is your job causing you stress ?)
+       (what would you like to change about your * ?)
+       )
+      )
+     #( ; начало данных 5й группы (мечты и будущее)
+      #(dream sleep night future hope goal plan)
+      #(
+       (what are your hopes for the future ?)
+       (do you often think about your goals ?)
+       (how do your dreams make you feel when you wake up ?)
+       (tell me more about your * ?)
+       )
+      )
+    )
+  )
+)
+
+
+; список всех ключевых слов
+(define keywords-list (hash-keys keywords-structure))
