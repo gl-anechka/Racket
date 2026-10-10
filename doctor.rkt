@@ -6,7 +6,7 @@
 (require racket/list)
 
 ; основная функция, запускающая "Доктора"
-; параметр name -- имя пациента
+; параметр name -- им()я пациента
 (define (visit-doctor name)
   (printf "Hello, ~a!\n" name)
   (print '(what seems to be the trouble?))
@@ -72,7 +72,7 @@
 	    ((equal? user-response '(goodbye)) ; реплика '(goodbye) служит для выхода из цикла
              (printf "Goodbye, ~a!\n" name)
              (println '(see you next week)))
-            (else (print (reply user-response history)) ; иначе Доктор генерирует ответ, печатает его и продолжает цикл
+            (else (print (reply-v2 strategies user-response history)) ; иначе Доктор генерирует ответ, печатает его и продолжает цикл
                   ; добавляем реплику в исторический вектор (ф-ия добавления описана ниже)
                   ; после ответа Доктора, чтобы выбирать ответ только из прошлых фраз
                   (doctor-driver-loop-v2 name (add-to-history user-response history))
@@ -89,21 +89,90 @@
 ;      )
 ;)
 
-; генерация ответной реплики по user-response -- реплике от пользователя и исторического вектора history
-(define (reply user-response history)
-  (let ((history? (history-applicable? history))
-        (keywords? (keywords-applicable? user-response)))
-      (case (random
-             (if history? 0 1) ; левая граница зависит от "истории"
-             (if keywords? 4 3) ; правая граница зависит от ключевых слов
-             ) ; с равной вероятностью выбирается один из способов построения ответа
-        ((0) (history-answer history)) ; 3й способ
-        ((1) (hedge-answer))  ; 1й способ
-        ((2) (qualifier-answer user-response)) ; 2й способ
-        ((3) (keyword-answer user-response)) ; 4й способ
+; генерация ответной реплики по user-response -- реплике от пациента и исторического вектора history
+;(define (reply user-response history)
+;  (let ((history? (history-applicable? history))
+;        (keywords? (keywords-applicable? user-response)))
+;      (case (random
+;             (if history? 0 1) ; левая граница зависит от "истории"
+;             (if keywords? 4 3) ; правая граница зависит от ключевых слов
+;             ) ; с равной вероятностью выбирается один из способов построения ответа
+;        ((0) (history-answer history)) ; 3й способ
+;        ((1) (hedge-answer))  ; 1й способ
+;        ((2) (qualifier-answer user-response)) ; 2й способ
+;        ((3) (keyword-answer user-response)) ; 4й способ
+;      )
+;  )
+;)
+
+
+; функции работы с вектором стратегий
+(define (strategy-checker strategy) (vector-ref strategy 0)) ; функция проверки применимости стратегии из вектора стратегий
+(define (strategy-weight strategy) (vector-ref strategy 1)) ; вес стратегии из вектора стратегий
+(define (strategy-func strategy) (vector-ref strategy 2)) ; сама стратегия из вектора стратегий
+
+
+; обертки над чеккерами для стратегий, т.к. все они имеют разную сигнатуру надо прийти к одной
+(define (always-applicable? user-response history) #t) ; для hedge и qualifier
+(define (new-history-applicable? user-response history) (history-applicable? history)) ; для стратегии с историей (history)
+(define (new-keywords-applicable? user-response history) (keywords-applicable? user-response)) ; для стратегии ответа по ключевым словам (keywords)
+
+
+; обертки над функциями для стратегий, т.к. все они имеют разную сигнатуру надо прийти к одной
+(define (func-hedge user-response history) (hedge-answer)) ; для hedge
+(define (func-qualifier user-response history) (qualifier-answer user-response)) ; для qualifier
+(define (func-history user-response history) (history-answer history)) ; для history
+(define (func-keywords user-response history) (keyword-answer user-response)) ; для keywords
+
+
+; создание описания одной стратегии по функции-чекеру, весу и обработчику стратегии
+(define (make-strategy checker weight func)
+  (vector checker weight func)
+)
+
+; создание вектора со стратегиями ответов, вычисляется один раз
+(define strategies
+  (vector (make-strategy always-applicable? 1 func-hedge)
+          (make-strategy always-applicable? 1 func-qualifier)
+          (make-strategy new-history-applicable? 2 func-history)
+          (make-strategy new-keywords-applicable? 6 func-keywords))
+)
+
+
+; выбирает случайный элемент с учетом веса
+; получает вектор стратегий и функцию, возвращающую вес элемента вектора
+(define (pick-random-vector-with-weight vctr weight)
+  (let* ((total (vector-foldl ; вычисление суммы весов стратегий
+                 (lambda (i sum elem) (+ sum (weight elem))) ; функция получения веса элемента
+                 0 vctr))
+         (dot (random 0 total))) ; выбор случайной точки на прямой от 0 до суммы весов, т.е. геометрическое решение задачи
+    (call/cc
+     (lambda (exit-cc)
+       (vector-foldl ; ищем элемента, в который попадает точка
+        (lambda (i left elem)
+          (let ((right (+ left (weight elem)))) ; сравниваем с правой границей отрезка
+            (if (< dot right) (exit-cc elem) right))) ; попали - немедленный выход, не попали сдвигаемся на правую границу
+        0
+        vctr
         )
+       )
+     )
+    )
+)
+
+
+; новый вариант reply, где алгоритм не меняется при изменении вектора стратегий
+; strategies -- вектор стратегий, user-response -- реплика пациента, history -- исторический вектор
+(define (reply-v2 vctr user-response history)
+  (let* ((applicable (vector-filter ; оставляем только применимые стратегии
+                      (lambda (strategy)
+                        ((strategy-checker strategy) user-response history)) ; функция проверки - фукнция-чеккер из элемента вектора
+                      vctr))
+         (chosen (pick-random-vector-with-weight applicable strategy-weight))) ; из отфильтрованного списка случайно выбираем стратегию
+    ((strategy-func chosen) user-response history) ; вызываем выбранную стратегию
   )
 )
+
 
 ; 1й способ генерации ответной реплики -- случайный выбор одной из заготовленных фраз, не связанных с репликой пользователя
 (define (hedge-answer)
