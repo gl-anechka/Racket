@@ -6,7 +6,7 @@
 (require racket/list)
 
 ; основная функция, запускающая "Доктора"
-; параметр name -- им()я пациента
+; параметр name -- имя пациента
 (define (visit-doctor name)
   (printf "Hello, ~a!\n" name)
   (print '(what seems to be the trouble?))
@@ -166,7 +166,7 @@
 (define (reply-v2 vctr user-response history)
   (let* ((applicable (vector-filter ; оставляем только применимые стратегии
                       (lambda (strategy)
-                        ((strategy-checker strategy) user-response history)) ; функция проверки - фукнция-чеккер из элемента вектора
+                        ((strategy-checker strategy) user-response history)) ; функция проверки - функция-чеккер из элемента вектора
                       vctr))
          (chosen (pick-random-vector-with-weight applicable strategy-weight))) ; из отфильтрованного списка случайно выбираем стратегию
     ((strategy-func chosen) user-response history) ; вызываем выбранную стратегию
